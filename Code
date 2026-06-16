@@ -1,0 +1,697 @@
+
+import tkinter as tk
+from tkinter import messagebox, ttk
+import json
+import os
+from datetime import datetime
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.gridspec import GridSpec
+ 
+FILE_PATH = "mental_health_results.json"
+ 
+PHQ_QUESTIONS = [
+    "Little interest or pleasure in doing things?",
+    "Feeling down, depressed, or hopeless?",
+    "Trouble sleeping or sleeping too much?",
+    "Feeling tired or having little energy?",
+    "Poor appetite or overeating?",
+    "Feeling bad about yourself — or that you are a failure?",
+    "Trouble concentrating on things (reading, TV, etc.)?",
+    "Moving/speaking slowly, or being fidgety/restless?",
+    "Thoughts of self-harm or that you would be better off dead?"
+]
+ 
+GAD_QUESTIONS = [
+    "Feeling nervous, anxious, or on edge?",
+    "Unable to stop or control worrying?",
+    "Worrying too much about different things?",
+    "Trouble relaxing?",
+    "Being so restless it is hard to sit still?",
+    "Becoming easily annoyed or irritable?",
+    "Feeling afraid as if something awful might happen?"
+]
+ 
+OPTIONS = [
+    "0 — Not at all",
+    "1 — Several days",
+    "2 — More than half the days",
+    "3 — Nearly every day"
+]
+ 
+# ── Clinical thresholds ──────────────────────────────────────────
+THRESHOLDS = {
+    "hr":   {"low": 40,  "high": 120, "unit": "bpm",  "label": "Heart Rate"},
+    "hrv":  {"low": 20,  "high": 80,  "unit": "ms",   "label": "HRV"},
+    "spo2": {"low": 95,  "high": 100, "unit": "%",    "label": "SpO₂"},
+    "gsr":  {"low": 0,   "high": 20,  "unit": "µS",   "label": "GSR"},
+    "temp": {"low": 97.0,"high": 99.5,"unit": "°F",   "label": "Temperature"},
+    "sleep":{"low": 6,   "high": 9,   "unit": "hrs",  "label": "Sleep Hours"},
+}
+ 
+PHQ_SEVERITY = [
+    (0,  4,  "Minimal depression"),
+    (5,  9,  "Mild depression"),
+    (10, 14, "Moderate depression"),
+    (15, 19, "Moderately severe depression"),
+    (20, 27, "Severe depression"),
+]
+ 
+GAD_SEVERITY = [
+    (0,  4,  "Minimal anxiety"),
+    (5,  9,  "Mild anxiety"),
+    (10, 14, "Moderate anxiety"),
+    (15, 21, "Severe anxiety"),
+]
+ 
+RECOMMENDATIONS = {
+    "High": [
+        ("🏥", "Seek Professional Help",
+         "Contact a licensed mental health professional or psychiatrist immediately. "
+         "Early intervention significantly improves outcomes."),
+        ("😴", "Prioritise Sleep Hygiene",
+         "Maintain a fixed sleep/wake schedule. Avoid screens 1 hour before bed. "
+         "Target 7–9 hours of uninterrupted sleep."),
+        ("🧘", "Mindfulness & Breathing",
+         "Practice 4-7-8 breathing (inhale 4 s, hold 7 s, exhale 8 s) twice daily. "
+         "Apps: Headspace, Calm, Insight Timer."),
+        ("🚶", "Gentle Daily Movement",
+         "30 minutes of low-intensity walking or yoga lowers cortisol by ~15% and "
+         "raises serotonin. Start small — even 10 minutes helps."),
+        ("📵", "Reduce Stress Triggers",
+         "Limit news/social media to 30 min/day. Identify and avoid known stressors. "
+         "Delegate tasks where possible."),
+        ("🤝", "Social Support",
+         "Talk to a trusted friend or family member today. Isolation worsens symptoms; "
+         "connection is a proven protective factor."),
+    ],
+    "Moderate": [
+        ("🏃", "Regular Exercise",
+         "Aim for 150 min/week of moderate aerobic activity (brisk walk, cycling, swimming). "
+         "Exercise is as effective as antidepressants for mild-moderate depression."),
+        ("🥗", "Balanced Nutrition",
+         "Eat Mediterranean-style: whole grains, leafy greens, oily fish, nuts. "
+         "Reduce sugar and ultra-processed food — gut-brain axis is real."),
+        ("📓", "Journalling",
+         "Write 3 things you are grateful for each evening. "
+         "Gratitude journalling measurably reduces GAD scores within 4 weeks."),
+        ("🧠", "Cognitive Reframing",
+         "When a negative thought arises, ask: 'Is this fact or interpretation?' "
+         "CBT workbooks (e.g. Mind Over Mood) can guide this process."),
+        ("☀️", "Sunlight Exposure",
+         "Get 20–30 minutes of natural light before 10 am daily. "
+         "This regulates circadian rhythm and boosts Vitamin D."),
+    ],
+    "Low": [
+        ("✅", "Maintain Your Routine",
+         "Your scores indicate good mental health. Keep consistent sleep, exercise "
+         "and social connection as protective habits."),
+        ("🔍", "Stay Self-Aware",
+         "Continue monitoring every 2–4 weeks. Early detection of changes "
+         "leads to faster recovery if needed."),
+        ("💚", "Support Others",
+         "Strong mental health is a resource — share your coping strategies "
+         "with people around you."),
+    ],
+}
+ 
+ 
+def load_results():
+    if not os.path.exists(FILE_PATH):
+        return []
+    try:
+        with open(FILE_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return []
+ 
+ 
+def save_result(result):
+    data = load_results()
+    data.append(result)
+    with open(FILE_PATH, "w") as f:
+        json.dump(data, f, indent=4)
+ 
+ 
+def get_severity_label(score, table):
+    for lo, hi, label in table:
+        if lo <= score <= hi:
+            return label
+    return "Unknown"
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+class MentalHealthApp(tk.Tk):
+ 
+    def __init__(self):
+        super().__init__()
+        self.title("Mental Health Monitoring System")
+        self.geometry("740x820")
+        self.resizable(True, True)
+        self.configure(bg="#0B3D91")
+ 
+        self.days = 1
+        self.samples = []
+        self.phq_score = 0
+        self.gad_score = 0
+ 
+        self.frames = {}
+        for F in (HomePage, DurationPage, PhysicalInputPage,
+                  QuestionnairePage, ResultPage, HistoryPage):
+            frame = F(self)
+            self.frames[F] = frame
+            frame.grid(row=0, column=0, sticky="nsew")
+ 
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.show_frame(HomePage)
+ 
+    def show_frame(self, page):
+        self.frames[page].tkraise()
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+class HomePage(tk.Frame):
+ 
+    def __init__(self, master):
+        super().__init__(master, bg="#0B3D91")
+ 
+        tk.Label(self, text="🧠", font=("Arial", 48),
+                 bg="#0B3D91", fg="white").pack(pady=(40, 5))
+        tk.Label(self, text="Mental Health Monitoring System",
+                 font=("Arial", 22, "bold"), bg="#0B3D91", fg="white").pack()
+        tk.Label(self, text="Hybrid PHQ-9 · GAD-7 · Physiological Fusion",
+                 font=("Arial", 11), bg="#0B3D91", fg="#A8C8FF").pack(pady=8)
+ 
+        sep = tk.Frame(self, bg="#4DA6FF", height=2, width=400)
+        sep.pack(pady=12)
+ 
+        for txt, cmd in [
+            ("▶  Start New Assessment", lambda: master.show_frame(DurationPage)),
+            ("📋  View History",          lambda: master.show_frame(HistoryPage)),
+        ]:
+            tk.Button(self, text=txt, width=28, height=2,
+                      bg="#4DA6FF", fg="white", font=("Arial", 12, "bold"),
+                      relief="flat", cursor="hand2", command=cmd).pack(pady=8)
+ 
+        tk.Label(self,
+                 text="Results are for self-monitoring only — not a clinical diagnosis.",
+                 font=("Arial", 9), bg="#0B3D91", fg="#7AAAD4").pack(side="bottom", pady=10)
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+class DurationPage(tk.Frame):
+ 
+    def __init__(self, master):
+        super().__init__(master, bg="#0B3D91")
+ 
+        tk.Label(self, text="How Many Days to Monitor?",
+                 font=("Arial", 18, "bold"), bg="#0B3D91", fg="white").pack(pady=30)
+        tk.Label(self, text="(4 physical readings will be collected per day)",
+                 font=("Arial", 10), bg="#0B3D91", fg="#A8C8FF").pack()
+ 
+        self.entry = tk.Entry(self, font=("Arial", 18), width=8, justify="center")
+        self.entry.pack(pady=20)
+        self.entry.insert(0, "1")
+ 
+        tk.Button(self, text="Continue →", width=20, bg="#4DA6FF", fg="white",
+                  font=("Arial", 12, "bold"), relief="flat",
+                  command=self.next_page).pack(pady=10)
+        tk.Button(self, text="← Back", width=20, bg="#1A5CB0", fg="white",
+                  relief="flat", command=lambda: master.show_frame(HomePage)).pack()
+ 
+    def next_page(self):
+        try:
+            days = int(self.entry.get())
+            if days <= 0:
+                raise ValueError
+            self.master.days = days
+            self.master.show_frame(PhysicalInputPage)
+        except Exception:
+            messagebox.showerror("Invalid Input", "Please enter a positive whole number of days.")
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+class PhysicalInputPage(tk.Frame):
+ 
+    FIELDS = [
+        ("Heart Rate",   "hr",    "bpm",  "Normal: 60–100"),
+        ("HRV",          "hrv",   "ms",   "Normal: 20–80"),
+        ("SpO₂",         "spo2",  "%",    "Normal: 95–100"),
+        ("GSR",          "gsr",   "µS",   "Normal: 1–20"),
+        ("Temperature",  "temp",  "°F",   "Normal: 97–99.5"),
+        ("Sleep Hours",  "sleep", "hrs",  "Target: 7–9"),
+    ]
+ 
+    def __init__(self, master):
+        super().__init__(master, bg="#0B3D91")
+        self.index = 0
+ 
+        tk.Label(self, text="Physical Data Entry",
+                 font=("Arial", 18, "bold"), bg="#0B3D91", fg="white").pack(pady=15)
+ 
+        self.sample_label = tk.Label(self, text="", font=("Arial", 12),
+                                     bg="#0B3D91", fg="#A8C8FF")
+        self.sample_label.pack(pady=4)
+ 
+        card = tk.Frame(self, bg="#163F7A", bd=0, relief="flat")
+        card.pack(padx=30, pady=10, fill="x")
+ 
+        self.entries = {}
+        for i, (label, key, unit, hint) in enumerate(self.FIELDS):
+            tk.Label(card, text=f"{label} ({unit})", bg="#163F7A",
+                     fg="white", font=("Arial", 11, "bold"),
+                     width=20, anchor="e").grid(row=i, column=0, padx=10, pady=6)
+            e = tk.Entry(card, width=14, font=("Arial", 11))
+            e.grid(row=i, column=1, padx=6, pady=6)
+            tk.Label(card, text=hint, bg="#163F7A", fg="#7AAAD4",
+                     font=("Arial", 9)).grid(row=i, column=2, padx=6, sticky="w")
+            self.entries[key] = e
+ 
+        tk.Button(self, text="Save & Next →", bg="#4DA6FF", fg="white",
+                  font=("Arial", 12, "bold"), relief="flat",
+                  width=22, command=self.save_data).pack(pady=16)
+ 
+    def tkraise(self, *args, **kwargs):
+        self.master.samples = []
+        self.index = 0
+        self._clear()
+        self._update_label()
+        super().tkraise(*args, **kwargs)
+ 
+    def _update_label(self):
+        total = self.master.days * 4
+        day = (self.index // 4) + 1
+        reading = (self.index % 4) + 1
+        self.sample_label.config(
+            text=f"Day {day}  ·  Reading {reading}/4  (Sample {self.index + 1} of {total})")
+ 
+    def _clear(self):
+        for e in self.entries.values():
+            e.delete(0, tk.END)
+ 
+    def save_data(self):
+        try:
+            sample = {k: float(self.entries[k].get()) for k in self.entries}
+            self.master.samples.append(sample)
+            self.index += 1
+            self._clear()
+            if self.index >= self.master.days * 4:
+                self.master.show_frame(QuestionnairePage)
+            else:
+                self._update_label()
+        except Exception:
+            messagebox.showerror("Invalid Input", "Please enter numeric values in all fields.")
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+class QuestionnairePage(tk.Frame):
+ 
+    def __init__(self, master):
+        super().__init__(master, bg="#0B3D91")
+        self.current = 0
+        self.phase = "PHQ"
+        self.answers = []
+ 
+        self.phase_label = tk.Label(self, text="", font=("Arial", 13, "bold"),
+                                    bg="#0B3D91", fg="#4DA6FF")
+        self.phase_label.pack(pady=(20, 2))
+ 
+        self.progress_label = tk.Label(self, text="", font=("Arial", 10),
+                                       bg="#0B3D91", fg="#A8C8FF")
+        self.progress_label.pack()
+ 
+        self.progress = ttk.Progressbar(self, length=500, mode="determinate")
+        self.progress.pack(pady=6)
+ 
+        self.question_label = tk.Label(self, text="", font=("Arial", 13),
+                                       bg="#0B3D91", fg="white",
+                                       wraplength=620, justify="left")
+        self.question_label.pack(pady=20, padx=30)
+ 
+        self.var = tk.IntVar(value=-1)
+        self.radio_frame = tk.Frame(self, bg="#0B3D91")
+        self.radio_frame.pack(pady=6)
+        for i, opt in enumerate(OPTIONS):
+            tk.Radiobutton(self.radio_frame, text=opt, variable=self.var, value=i,
+                           bg="#0B3D91", fg="white", selectcolor="#4DA6FF",
+                           font=("Arial", 11), anchor="w").pack(anchor="w", padx=80, pady=2)
+ 
+        tk.Button(self, text="Next →", bg="#4DA6FF", fg="white",
+                  font=("Arial", 12, "bold"), relief="flat",
+                  width=20, command=self.next_question).pack(pady=20)
+ 
+    def tkraise(self, *args, **kwargs):
+        self.current = 0
+        self.phase = "PHQ"
+        self.answers = []
+        self._update()
+        super().tkraise(*args, **kwargs)
+ 
+    def _questions(self):
+        return PHQ_QUESTIONS if self.phase == "PHQ" else GAD_QUESTIONS
+ 
+    def _total(self):
+        return len(PHQ_QUESTIONS) + len(GAD_QUESTIONS)
+ 
+    def _done_so_far(self):
+        base = len(PHQ_QUESTIONS) if self.phase == "GAD" else 0
+        return base + self.current
+ 
+    def _update(self):
+        qs = self._questions()
+        self.phase_label.config(
+            text="PHQ-9 — Depression Screen" if self.phase == "PHQ"
+            else "GAD-7 — Anxiety Screen")
+        done = self._done_so_far()
+        total = self._total()
+        self.progress_label.config(text=f"Question {done + 1} of {total}")
+        self.progress["maximum"] = total
+        self.progress["value"] = done
+        self.question_label.config(text=f"Q{self.current + 1}.  {qs[self.current]}")
+        self.var.set(-1)
+ 
+    def next_question(self):
+        val = self.var.get()
+        if val == -1:
+            messagebox.showwarning("No Answer", "Please select one option before continuing.")
+            return
+        self.answers.append(val)
+        self.current += 1
+        qs = self._questions()
+        if self.current >= len(qs):
+            if self.phase == "PHQ":
+                self.master.phq_score = sum(self.answers)
+                self.phase = "GAD"
+                self.current = 0
+                self.answers = []
+                self._update()
+            else:
+                self.master.gad_score = sum(self.answers)
+                self._generate_result()
+        else:
+            self._update()
+ 
+    def _generate_result(self):
+        s = self.master.samples
+        avgs = {k: np.mean([x[k] for x in s]) for k in s[0]}
+ 
+        def norm(val, lo, hi):
+            return max(0.0, min(1.0, (val - lo) / (hi - lo)))
+ 
+        # Higher HR / GSR / temp / low-sleep / low-HRV → higher physical stress
+        hr_stress   = norm(avgs['hr'],   60,  130)
+        hrv_stress  = 1 - norm(avgs['hrv'], 20,  80)
+        gsr_stress  = norm(avgs['gsr'],  0,   20)
+        temp_stress = norm(avgs['temp'], 97,  100)
+        spo2_stress = 1 - norm(avgs['spo2'], 90, 100)
+        sleep_stress= 1 - norm(avgs['sleep'], 6,  9)
+ 
+        raw_physical = (hr_stress * 25 + hrv_stress * 20 +
+                        gsr_stress * 20 + temp_stress * 10 +
+                        spo2_stress * 10 + sleep_stress * 15)
+ 
+        physical_score    = raw_physical * 0.6   # 60 % weight → max 60
+        psychological_score = ((self.master.phq_score + self.master.gad_score) / 48) * 40
+ 
+        final_score = round(physical_score + psychological_score, 2)
+ 
+        if final_score < 30:
+            level = "Low"
+        elif final_score < 60:
+            level = "Moderate"
+        else:
+            level = "High"
+ 
+        result = {
+            "date":         str(datetime.now()),
+            "days":         self.master.days,
+            "total_samples": len(s),
+            "phq9":         self.master.phq_score,
+            "phq9_severity":get_severity_label(self.master.phq_score, PHQ_SEVERITY),
+            "gad7":         self.master.gad_score,
+            "gad7_severity":get_severity_label(self.master.gad_score, GAD_SEVERITY),
+            "physical_score":   round(physical_score, 2),
+            "psychological_score": round(psychological_score, 2),
+            "final_score":  final_score,
+            "risk":         level,
+            "averages":     {k: round(v, 2) for k, v in avgs.items()},
+        }
+ 
+        save_result(result)
+        self.master.frames[ResultPage].display_result(result)
+        self.master.show_frame(ResultPage)
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+class ResultPage(tk.Frame):
+ 
+    def __init__(self, master):
+        super().__init__(master, bg="#0B3D91")
+        self._result = None
+ 
+        tk.Label(self, text="Final Mental Health Result",
+                 font=("Arial", 20, "bold"), bg="#0B3D91", fg="white").pack(pady=15)
+ 
+        self.text = tk.Text(self, width=76, height=28, bg="#0D2A5E", fg="white",
+                            font=("Courier", 10), relief="flat", padx=10, pady=8)
+        self.text.pack(padx=20, pady=5, fill="both", expand=True)
+ 
+        btn_frame = tk.Frame(self, bg="#0B3D91")
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="📊  Show Graphs", bg="#4DA6FF", fg="white",
+                  font=("Arial", 11, "bold"), relief="flat", width=18,
+                  command=self.show_graphs).pack(side="left", padx=10)
+        tk.Button(btn_frame, text="🏠  Back Home", bg="#1A5CB0", fg="white",
+                  font=("Arial", 11), relief="flat", width=16,
+                  command=lambda: master.show_frame(HomePage)).pack(side="left", padx=10)
+ 
+    def display_result(self, result):
+        self._result = result
+        t = self.text
+        t.delete("1.0", tk.END)
+ 
+        RISK_COLORS = {"Low": "✅", "Moderate": "⚠️", "High": "🔴"}
+        icon = RISK_COLORS.get(result['risk'], "")
+ 
+        lines = [
+            "═" * 62,
+            "         FINAL MENTAL HEALTH RESULT",
+            "═" * 62,
+            f"  Monitoring Days      : {result['days']}",
+            f"  Total Data Readings  : {result['total_samples']} times",
+            "─" * 62,
+            "  PSYCHOLOGICAL SCORES (40% weight)",
+            f"  PHQ-9 Score          : {result['phq9']}/27  — {result['phq9_severity']}",
+            f"  GAD-7 Score          : {result['gad7']}/21  — {result['gad7_severity']}",
+            "─" * 62,
+            "  PHYSIOLOGICAL AVERAGES",
+        ]
+ 
+        for key, meta in THRESHOLDS.items():
+            avg = result['averages'].get(key, 0)
+            flag = ""
+            if key == "spo2":
+                if avg < meta["low"]:
+                    flag = "  ⚠ LOW"
+            elif key == "sleep":
+                if avg < meta["low"]:
+                    flag = "  ⚠ LOW"
+                elif avg > meta["high"]:
+                    flag = "  ⚠ HIGH"
+            else:
+                if avg < meta["low"]:
+                    flag = "  ⚠ LOW"
+                elif avg > meta["high"]:
+                    flag = "  ⚠ HIGH"
+            lines.append(f"  {meta['label']:<18}: {avg} {meta['unit']}{flag}")
+ 
+        lines += [
+            "─" * 62,
+            "  SCORING BREAKDOWN",
+            f"  Physiological Score  : {result['physical_score']}  (60% contribution)",
+            f"  Psychological Score  : {result['psychological_score']}  (40% contribution)",
+            "─" * 62,
+            f"  Final Risk Score     : {result['final_score']} / 100",
+            f"  Risk Level           : {icon}  {result['risk'].upper()}",
+            "═" * 62,
+            "",
+            "  RECOMMENDATIONS",
+            "─" * 62,
+        ]
+ 
+        for emoji, title, body in RECOMMENDATIONS.get(result['risk'], []):
+            lines.append(f"  {emoji}  {title}")
+            # word-wrap body at ~55 chars
+            words = body.split()
+            line_buf = "     "
+            for w in words:
+                if len(line_buf) + len(w) + 1 > 60:
+                    lines.append(line_buf)
+                    line_buf = "     " + w
+                else:
+                    line_buf += (" " if line_buf.strip() else "") + w
+            if line_buf.strip():
+                lines.append(line_buf)
+            lines.append("")
+ 
+        lines.append("═" * 62)
+        t.insert(tk.END, "\n".join(lines))
+ 
+    # ── Graphing ────────────────────────────────────────────────
+    def show_graphs(self):
+        if not self._result:
+            return
+        samples = self.master.samples
+        result  = self._result
+ 
+        n = len(samples)
+        xs = list(range(1, n + 1))
+ 
+        keys_meta = list(THRESHOLDS.items())   # 6 metrics
+ 
+        fig = plt.figure(figsize=(18, 20))
+        fig.patch.set_facecolor("#0B1A3A")
+        gs  = GridSpec(4, 2, figure=fig, hspace=0.55, wspace=0.35)
+ 
+        def style_ax(ax, title):
+            ax.set_facecolor("#0D2A5E")
+            ax.set_title(title, color="white", fontsize=11, fontweight="bold", pad=8)
+            ax.tick_params(colors="white")
+            ax.xaxis.label.set_color("white")
+            ax.yaxis.label.set_color("white")
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#4DA6FF")
+            ax.grid(True, color="#1E3F6A", linestyle="--", linewidth=0.6)
+ 
+        def add_bands(ax, lo, hi, ymin, ymax):
+            # Red bands outside normal range
+            if ymin < lo:
+                ax.axhspan(ymin, lo, color="red", alpha=0.18)
+            if ymax > hi:
+                ax.axhspan(hi, ymax, color="red", alpha=0.18)
+            ax.axhline(lo, color="#FF6B6B", linewidth=1.2, linestyle="--", label=f"Low limit ({lo})")
+            ax.axhline(hi, color="#FF6B6B", linewidth=1.2, linestyle="--", label=f"High limit ({hi})")
+ 
+        colors = ["#4DA6FF", "#50FA7B", "#FFB86C", "#FF79C6", "#BD93F9", "#F1FA8C"]
+ 
+        axes_individual = [fig.add_subplot(gs[i // 2, i % 2]) for i in range(6)]
+ 
+        for i, ((key, meta), ax) in enumerate(zip(keys_meta, axes_individual)):
+            vals = [s[key] for s in samples]
+            avg  = result['averages'][key]
+            lo, hi = meta["low"], meta["high"]
+ 
+            ymin = min(min(vals) * 0.92, lo * 0.9)
+            ymax = max(max(vals) * 1.08, hi * 1.1)
+            ax.set_ylim(ymin, ymax)
+ 
+            add_bands(ax, lo, hi, ymin, ymax)
+ 
+            # Color each point: red if out of range, else metric color
+            point_colors = []
+            for v in vals:
+                if key == "spo2":
+                    point_colors.append("#FF5555" if v < lo else colors[i])
+                else:
+                    point_colors.append("#FF5555" if (v < lo or v > hi) else colors[i])
+ 
+            ax.plot(xs, vals, color=colors[i], linewidth=1.8, zorder=3)
+            ax.scatter(xs, vals, c=point_colors, s=55, zorder=4, edgecolors="white", linewidths=0.5)
+ 
+            # Average line
+            ax.axhline(avg, color="#FFD700", linewidth=1.4, linestyle="-.",
+                       label=f"Avg {avg} {meta['unit']}")
+ 
+            style_ax(ax, f"{meta['label']} ({meta['unit']})")
+            ax.set_xlabel("Sample #")
+            ax.set_ylabel(meta['unit'])
+            ax.legend(fontsize=7, facecolor="#0B1A3A", labelcolor="white",
+                      framealpha=0.8, loc="best")
+ 
+        # ── Summary / Total graph ────────────────────────────────
+        ax_total = fig.add_subplot(gs[3, :])
+        style_ax(ax_total, "📊  Overall Normalised Physiological Trends (All Metrics)")
+ 
+        norm_vals = {}
+        for key, meta in THRESHOLDS.items():
+            vals = [s[key] for s in samples]
+            lo, hi = meta["low"], meta["high"]
+            rng = hi - lo if hi != lo else 1
+            norm_vals[key] = [(v - lo) / rng for v in vals]
+ 
+        for i, (key, meta) in enumerate(THRESHOLDS.items()):
+            nv = norm_vals[key]
+            ax_total.plot(xs, nv, color=colors[i], linewidth=2,
+                          marker='o', markersize=4, label=meta['label'])
+ 
+        ax_total.axhline(0, color="#FF6B6B", linewidth=1, linestyle="--", alpha=0.6, label="Low threshold")
+        ax_total.axhline(1, color="#FF6B6B", linewidth=1, linestyle="--", alpha=0.6, label="High threshold")
+        ax_total.axhspan(-0.5, 0,  color="red", alpha=0.10)
+        ax_total.axhspan(1,  1.5, color="red", alpha=0.10)
+        ax_total.set_ylim(-0.5, 1.5)
+        ax_total.set_xlabel("Sample #", color="white")
+        ax_total.set_ylabel("Normalised Value (0=low, 1=high normal)", color="white")
+        ax_total.legend(ncol=3, fontsize=8, facecolor="#0B1A3A",
+                        labelcolor="white", framealpha=0.8)
+ 
+        # Score summary text box
+        score_txt = (f"PHQ-9: {result['phq9']}  |  GAD-7: {result['gad7']}  |  "
+                     f"Physical: {result['physical_score']}  |  "
+                     f"Psychological: {result['psychological_score']}  |  "
+                     f"Final Risk Score: {result['final_score']}  |  Level: {result['risk'].upper()}")
+        fig.text(0.5, 0.01, score_txt, ha="center", va="bottom",
+                 fontsize=9, color="#A8C8FF",
+                 bbox=dict(boxstyle="round,pad=0.4", facecolor="#0D2A5E", edgecolor="#4DA6FF"))
+ 
+        fig.suptitle("Mental Health Physiological Monitoring Report",
+                     fontsize=15, fontweight="bold", color="white", y=0.995)
+ 
+        plt.show()
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+class HistoryPage(tk.Frame):
+ 
+    def __init__(self, master):
+        super().__init__(master, bg="#0B3D91")
+ 
+        tk.Label(self, text="Monitoring History",
+                 font=("Arial", 18, "bold"), bg="#0B3D91", fg="white").pack(pady=20)
+ 
+        self.text = tk.Text(self, width=76, height=28, bg="#0D2A5E", fg="white",
+                            font=("Courier", 10), relief="flat", padx=8, pady=6)
+        self.text.pack(padx=20, pady=5, fill="both", expand=True)
+ 
+        tk.Button(self, text="← Back Home", width=20, bg="#1A5CB0", fg="white",
+                  relief="flat", command=lambda: master.show_frame(HomePage)).pack(pady=10)
+ 
+    def tkraise(self, *args, **kwargs):
+        self.text.delete("1.0", tk.END)
+        data = load_results()
+ 
+        if not data:
+            self.text.insert(tk.END, "\n  No previous results found.\n")
+        else:
+            for item in reversed(data):
+                risk_icon = {"Low": "✅", "Moderate": "⚠️", "High": "🔴"}.get(item.get('risk', ''), "")
+                self.text.insert(tk.END,
+                    f"  {item['date']}\n"
+                    f"  Days: {item['days']}   |   Readings: {item.get('total_samples','?')}\n"
+                    f"  PHQ-9: {item['phq9']} ({item.get('phq9_severity','')})   "
+                    f"GAD-7: {item['gad7']} ({item.get('gad7_severity','')})\n"
+                    f"  Physical: {item.get('physical_score','?')}   "
+                    f"Psychological: {item.get('psychological_score','?')}\n"
+                    f"  Final Risk Score: {item['final_score']}   "
+                    f"Risk Level: {risk_icon} {item['risk']}\n"
+                    f"  {'─'*56}\n"
+                )
+ 
+        super().tkraise(*args, **kwargs)
+ 
+ 
+# ════════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    app = MentalHealthApp()
+    app.mainloop()
