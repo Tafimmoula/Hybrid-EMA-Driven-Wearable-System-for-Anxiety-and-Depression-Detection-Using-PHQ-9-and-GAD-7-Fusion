@@ -1,0 +1,2 @@
+# Hybrid-EMA-Driven-Wearable-System-for-Anxiety-and-Depression-Detection-Using-PHQ-9-and-GAD-7-Fusion
+Hybrid EMA-Driven Wearable System for Anxiety and Depression Detection using Raspberry Pi 5. The system combines HR, HRV, SpO₂, GSR, temperature, sleep/activity data, facial emotion detection, and PHQ-9/GAD-7 assessments. A 60:40 fusion model generates mental health risk scores, trends, and personalized recommendations.
